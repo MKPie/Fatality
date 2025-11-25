@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { Activity, CheckCircle, AlertCircle } from 'lucide-react';
-import { LogEntry } from './types';
+import { LogEntry } from '../types';
 
 interface LogViewerProps {
   logs: LogEntry[];
