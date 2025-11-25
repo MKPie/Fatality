@@ -1,5 +1,9 @@
+cd /home/mkpie/Documents/New\ MK/vendor_deploy/vendorflow-deploy/frontend
+mkdir -p components
+
+cat > components/LogViewer.tsx << 'EOF'
 import React, { useEffect, useRef } from 'react';
-import { Activity, CheckCircle, AlertCircle } from 'lucide-react';
+import { Terminal } from 'lucide-react';
 import { LogEntry } from '../types';
 
 interface LogViewerProps {
@@ -13,52 +17,59 @@ export const LogViewer: React.FC<LogViewerProps> = ({ logs }) => {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [logs]);
 
-  const getLogIcon = (type: LogEntry['type']) => {
+  const getLogColor = (type: LogEntry['type']) => {
     switch (type) {
-      case 'success':
-        return <CheckCircle className="w-3 h-3 text-green-400 flex-shrink-0" />;
-      case 'error':
-        return <AlertCircle className="w-3 h-3 text-red-400 flex-shrink-0" />;
-      case 'warning':
-        return <AlertCircle className="w-3 h-3 text-yellow-400 flex-shrink-0" />;
-      default:
-        return <Activity className="w-3 h-3 text-blue-400 flex-shrink-0" />;
+      case 'error': return 'text-red-400';
+      case 'success': return 'text-green-400';
+      case 'warning': return 'text-yellow-400';
+      default: return 'text-blue-400';
     }
   };
 
-  const getLogColor = (type: LogEntry['type']) => {
+  const getLogIcon = (type: LogEntry['type']) => {
     switch (type) {
-      case 'success':
-        return 'text-green-300';
-      case 'error':
-        return 'text-red-300';
-      case 'warning':
-        return 'text-yellow-300';
-      default:
-        return 'text-gray-300';
+      case 'error': return '✗';
+      case 'success': return '✓';
+      case 'warning': return '⚠';
+      default: return '•';
     }
   };
 
   return (
-    <div className="flex-1 overflow-y-auto font-mono text-xs space-y-1 scrollbar-thin">
-      {logs.length === 0 ? (
-        <div className="flex items-center justify-center h-full text-gray-500">
-          <div className="text-center">
-            <Activity className="w-8 h-8 mx-auto mb-2 opacity-50" />
-            <p className="text-sm">No activity yet</p>
-            <p className="text-xs mt-1">Logs will appear here during processing</p>
+    <div className="flex flex-col h-full">
+      <div className="flex items-center space-x-2 mb-3 pb-3 border-b border-gray-700">
+        <Terminal className="w-4 h-4 text-gray-400" />
+        <h4 className="text-xs font-semibold text-gray-300 uppercase tracking-wide">Console Output</h4>
+      </div>
+      
+      <div className="flex-1 overflow-y-auto scrollbar-thin font-mono text-xs space-y-1">
+        {logs.length === 0 ? (
+          <div className="text-gray-500 italic text-center py-8">
+            Waiting for process to start...
           </div>
-        </div>
-      ) : (
-        logs.map((log) => (
-          <div key={log.id} className="flex items-start space-x-2 py-1 hover:bg-slate-800/50 px-2 rounded">
-            {getLogIcon(log.type)}
-            <span className="text-gray-500 text-[10px] w-16 flex-shrink-0">{log.timestamp}</span>
-            <span className={`flex-1 ${getLogColor(log.type)} break-words`}>{log.message}</span>
-          </div>
-        ))
-      )}
-      <div ref={logEndRef} />
+        ) : (
+          logs.map((log) => (
+            <div key={log.id} className="flex items-start space-x-2 hover:bg-slate-800 px-2 py-1 rounded">
+              <span className="text-gray-500 text-[10px] mt-0.5 flex-shrink-0 w-16">
+                {log.timestamp}
+              </span>
+              <span className={`${getLogColor(log.type)} flex-shrink-0 mt-0.5`}>
+                {getLogIcon(log.type)}
+              </span>
+              <span className="text-gray-300 flex-1 break-words">
+                {log.message}
+              </span>
+            </div>
+          ))
+        )}
+        <div ref={logEndRef} />
+      </div>
     </div>
   );
 };
+EOF
+
+# Add and push
+git add components/LogViewer.tsx
+git commit -m "add: LogViewer component"
+git push
