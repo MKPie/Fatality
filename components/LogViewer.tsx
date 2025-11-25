@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { Activity, CheckCircle, AlertCircle } from 'lucide-react';
-import { LogEntry } from '../types';
+import { LogEntry } from './types';
 
 interface LogViewerProps {
   logs: LogEntry[];
@@ -51,10 +51,10 @@ export const LogViewer: React.FC<LogViewerProps> = ({ logs }) => {
         </div>
       ) : (
         logs.map((log) => (
-          <div key={log.id} className="flex items-start space-x-2 py-1">
+          <div key={log.id} className="flex items-start space-x-2 py-1 hover:bg-slate-800/50 px-2 rounded">
             {getLogIcon(log.type)}
             <span className="text-gray-500 text-[10px] w-16 flex-shrink-0">{log.timestamp}</span>
-            <span className={`flex-1 ${getLogColor(log.type)}`}>{log.message}</span>
+            <span className={`flex-1 ${getLogColor(log.type)} break-words`}>{log.message}</span>
           </div>
         ))
       )}
