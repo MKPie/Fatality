@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Database, Tags, Scale, Settings, Activity, Box, LayoutDashboard } from 'lucide-react';
 import { DashboardView } from './views/DashboardView';
 import { ScrapingView } from './views/ScrapingView';
@@ -8,56 +8,12 @@ import { EnitureView } from './views/EnitureView';
 import { SettingsView } from './views/SettingsView';
 import { LogViewer } from './components/LogViewer';
 import { AppStatus, TabId, LogEntry } from './types';
-import { API_ENDPOINTS, apiPost, apiGet, connectLogStream } from './api';
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabId>('dashboard');
   const [status, setStatus] = useState<AppStatus>(AppStatus.IDLE);
   const [progress, setProgress] = useState(0);
   const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [eventSource, setEventSource] = useState<EventSource | null>(null);
-
-  // Connect to log stream on mount
-  useEffect(() => {
-    const es = connectLogStream(
-      (log) => {
-        const entry: LogEntry = {
-          id: log.id?.toString() || Math.random().toString(36).substr(2, 9),
-          timestamp: log.timestamp || new Date().toLocaleTimeString(),
-          message: log.message,
-          type: log.level === 'error' ? 'error' : 
-                log.level === 'warning' ? 'warning' : 
-                log.level === 'success' ? 'success' : 'info'
-        };
-        setLogs(prev => [...prev.slice(-99), entry]); // Keep last 100 logs
-      },
-      (error) => {
-        console.error('Log stream error:', error);
-      }
-    );
-    setEventSource(es);
-
-    // Poll status periodically
-    const statusInterval = setInterval(async () => {
-      try {
-        const statusData = await apiGet<{is_processing: boolean, progress: number, current_task: string}>(API_ENDPOINTS.status);
-        if (statusData.is_processing) {
-          setStatus(AppStatus.PROCESSING);
-          setProgress(statusData.progress);
-        } else if (status === AppStatus.PROCESSING) {
-          setStatus(AppStatus.COMPLETED);
-          setProgress(100);
-        }
-      } catch (e) {
-        // Silently fail status checks
-      }
-    }, 2000);
-
-    return () => {
-      es.close();
-      clearInterval(statusInterval);
-    };
-  }, []);
 
   const addLog = (message: string, type: LogEntry['type'] = 'info') => {
     const entry: LogEntry = {
@@ -69,7 +25,7 @@ const App: React.FC = () => {
     setLogs(prev => [...prev, entry]);
   };
 
-  // Unified processing handler - NOW WITH REAL API CALLS
+  // Unified processing handler
   const handleProcess = async (taskName: string, payload: any, endpoint?: string) => {
     if (status === AppStatus.PROCESSING) return;
     
@@ -78,72 +34,46 @@ const App: React.FC = () => {
     setLogs([]); 
     addLog(`Initializing ${taskName}...`, 'info');
 
+    // NOTE: In a real app, this is where we send data to the Python Backend
     if (endpoint) {
-      try {
-        const formData = new FormData();
-        
-        // Append files and data from payload
-        Object.keys(payload).forEach(key => {
-          if (payload[key] instanceof File) {
-            formData.append(key, payload[key]);
-            addLog(`Attached file: ${payload[key].name} (${(payload[key].size/1024).toFixed(1)} KB)`, 'info');
-          } else if (typeof payload[key] === 'object' && payload[key] !== null) {
-            formData.append(key, JSON.stringify(payload[key]));
-          } else if (payload[key] !== undefined && payload[key] !== null) {
-            formData.append(key, String(payload[key]));
-          }
-        });
-        
-        addLog(`[API] Sending request to backend...`, 'info');
-        
-        // Determine full endpoint URL
-        let fullEndpoint = endpoint;
-        if (!endpoint.startsWith('http')) {
-          // Map short endpoints to full URLs
-          const endpointMap: Record<string, string> = {
-            '/api/scrape': API_ENDPOINTS.scrapeFile,
-            '/api/tags': API_ENDPOINTS.tagsProcess,
-            '/api/tags/push': API_ENDPOINTS.tagsPush,
-            '/api/weights': API_ENDPOINTS.weightsProcess,
-            '/api/eniture': API_ENDPOINTS.enitureSync,
-          };
-          fullEndpoint = endpointMap[endpoint] || `${API_ENDPOINTS.status.replace('/api/status', '')}${endpoint}`;
+      const formData = new FormData();
+      // Append files from payload
+      Object.keys(payload).forEach(key => {
+        if (payload[key] instanceof File) {
+          formData.append(key, payload[key]);
+          addLog(`Attached file: ${payload[key].name} (${(payload[key].size/1024).toFixed(1)} KB)`, 'info');
+        } else if (typeof payload[key] === 'object') {
+          formData.append(key, JSON.stringify(payload[key]));
+        } else {
+          formData.append(key, payload[key]);
         }
-        
-        const response = await fetch(fullEndpoint, { 
-          method: 'POST', 
-          body: formData 
-        });
-        
-        if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(`Server error: ${response.status} - ${errorText}`);
-        }
-        
-        const result = await response.json();
-        addLog(`[API] Request accepted: ${JSON.stringify(result)}`, 'success');
-        
-        // Backend runs task in background, status polling will update progress
-        
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        addLog(`[API] Error: ${errorMessage}`, 'error');
-        setStatus(AppStatus.ERROR);
-        return;
-      }
+      });
+      
+      // For now, we will just simulate the API call
+      addLog(`[API] Preparing POST request to ${endpoint}`, 'info');
+      // const response = await fetch(`http://localhost:8000${endpoint}`, { method: 'POST', body: formData });
     }
+    
+    // Simulation loop (Replace this with EventSource or WebSocket in production)
+    let currentProgress = 0;
+    const interval = setInterval(() => {
+      currentProgress += Math.random() * 5;
+      if (currentProgress > 100) {
+        currentProgress = 100;
+        clearInterval(interval);
+        setStatus(AppStatus.COMPLETED);
+        addLog(`${taskName} completed successfully.`, 'success');
+      } else {
+        setProgress(currentProgress);
+        if (Math.random() > 0.8) {
+          addLog(`Processing batch ${Math.floor(currentProgress)}...`, 'info');
+        }
+      }
+    }, 150);
   };
 
-  const stopProcessing = async () => {
+  const stopProcessing = () => {
     if (status !== AppStatus.PROCESSING) return;
-    
-    try {
-      await apiPost(API_ENDPOINTS.stop);
-      addLog('Stop request sent to server.', 'warning');
-    } catch (e) {
-      addLog('Failed to send stop request.', 'error');
-    }
-    
     setStatus(AppStatus.IDLE);
     addLog('Process stopped by user.', 'error');
     setProgress(0);
@@ -171,7 +101,7 @@ const App: React.FC = () => {
       case 'scraping': 
         return <ScrapingView 
           status={status} 
-          onStart={(file, config) => handleProcess('Web Scraper', { file, ...config }, '/api/scrape')} 
+          onStart={(file, config) => handleProcess('Web Scraper', { file, config }, '/api/scrape')} 
           onStop={stopProcessing} 
         />;
       case 'tags': 
@@ -224,13 +154,11 @@ const App: React.FC = () => {
         <div className="p-4 border-t border-gray-100">
           <div className="flex items-center space-x-3">
             <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500 to-purple-500 flex items-center justify-center text-white text-xs font-bold">
-              MK
+              JS
             </div>
             <div>
               <p className="text-sm font-medium text-gray-700">Admin User</p>
-              <p className="text-xs text-gray-500">
-                {status === AppStatus.PROCESSING ? '● Processing' : '● Online'}
-              </p>
+              <p className="text-xs text-gray-500">Online</p>
             </div>
           </div>
         </div>
@@ -254,10 +182,8 @@ const App: React.FC = () => {
                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium transition-colors duration-300
                  ${status === AppStatus.PROCESSING ? 'bg-blue-100 text-blue-800' : 
                    status === AppStatus.COMPLETED ? 'bg-green-100 text-green-800' : 
-                   status === AppStatus.ERROR ? 'bg-red-100 text-red-800' :
                    'bg-gray-100 text-gray-800'}`}>
-                 {status === AppStatus.PROCESSING ? '● Processing' : 
-                  status === AppStatus.ERROR ? '● Error' : status}
+                 {status === AppStatus.PROCESSING ? '● Processing' : status}
                </span>
             </div>
           </div>
