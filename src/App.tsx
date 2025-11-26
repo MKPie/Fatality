@@ -1,4 +1,3 @@
-cat > src/App.tsx << 'ENDOFFILE'
 import React, { useState } from 'react';
 import { Database, Tags, Scale, Settings, Activity, Box, LayoutDashboard } from 'lucide-react';
 import { DashboardView } from './views/DashboardView';
@@ -26,20 +25,23 @@ const App: React.FC = () => {
     setLogs(prev => [...prev, entry]);
   };
 
+  // Unified processing handler
   const handleProcess = async (taskName: string, payload: any, endpoint?: string) => {
     if (status === AppStatus.PROCESSING) return;
     
     setStatus(AppStatus.PROCESSING);
     setProgress(0);
     setLogs([]); 
-    addLog(\`Initializing \${taskName}...\`, 'info');
+    addLog(`Initializing ${taskName}...`, 'info');
 
+    // NOTE: In a real app, this is where we send data to the Python Backend
     if (endpoint) {
       const formData = new FormData();
+      // Append files from payload
       Object.keys(payload).forEach(key => {
         if (payload[key] instanceof File) {
           formData.append(key, payload[key]);
-          addLog(\`Attached file: \${payload[key].name} (\${(payload[key].size/1024).toFixed(1)} KB)\`, 'info');
+          addLog(`Attached file: ${payload[key].name} (${(payload[key].size/1024).toFixed(1)} KB)`, 'info');
         } else if (typeof payload[key] === 'object') {
           formData.append(key, JSON.stringify(payload[key]));
         } else {
@@ -47,9 +49,12 @@ const App: React.FC = () => {
         }
       });
       
-      addLog(\`[API] Preparing POST request to \${endpoint}\`, 'info');
+      // For now, we will just simulate the API call
+      addLog(`[API] Preparing POST request to ${endpoint}`, 'info');
+      // const response = await fetch(`http://localhost:8000${endpoint}`, { method: 'POST', body: formData });
     }
     
+    // Simulation loop (Replace this with EventSource or WebSocket in production)
     let currentProgress = 0;
     const interval = setInterval(() => {
       currentProgress += Math.random() * 5;
@@ -57,11 +62,11 @@ const App: React.FC = () => {
         currentProgress = 100;
         clearInterval(interval);
         setStatus(AppStatus.COMPLETED);
-        addLog(\`\${taskName} completed successfully.\`, 'success');
+        addLog(`${taskName} completed successfully.`, 'success');
       } else {
         setProgress(currentProgress);
         if (Math.random() > 0.8) {
-          addLog(\`Processing batch \${Math.floor(currentProgress)}...\`, 'info');
+          addLog(`Processing batch ${Math.floor(currentProgress)}...`, 'info');
         }
       }
     }, 150);
@@ -77,13 +82,13 @@ const App: React.FC = () => {
   const NavItem = ({ id, icon, label }: { id: TabId, icon: React.ReactNode, label: string }) => (
     <button
       onClick={() => setActiveTab(id)}
-      className={\`w-full flex items-center px-4 py-3 text-sm font-medium transition-all duration-200 rounded-lg mb-1
-        \${activeTab === id 
+      className={`w-full flex items-center px-4 py-3 text-sm font-medium transition-all duration-200 rounded-lg mb-1
+        ${activeTab === id 
           ? 'bg-blue-50 text-blue-700 shadow-sm' 
           : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
-        }\`}
+        }`}
     >
-      <span className={\`\${activeTab === id ? 'text-blue-600' : 'text-gray-400'} mr-3\`}>
+      <span className={`${activeTab === id ? 'text-blue-600' : 'text-gray-400'} mr-3`}>
         {icon}
       </span>
       {label}
@@ -119,10 +124,12 @@ const App: React.FC = () => {
     }
   };
 
+  // Right panel (Logs) is hidden on Dashboard and Settings to give more space
   const showRightPanel = ['scraping', 'tags', 'weights', 'eniture'].includes(activeTab);
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
+      {/* Sidebar */}
       <aside className="w-64 bg-white border-r border-gray-200 flex flex-col">
         <div className="p-6 flex items-center space-x-3">
           <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shadow-lg shadow-blue-500/30">
@@ -157,7 +164,9 @@ const App: React.FC = () => {
         </div>
       </aside>
 
+      {/* Main Content */}
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        {/* Header */}
         <header className="bg-white border-b border-gray-200 px-8 py-4 flex justify-between items-center">
           <h1 className="text-2xl font-bold text-gray-900">
             {activeTab === 'dashboard' && 'System Dashboard'}
@@ -170,21 +179,24 @@ const App: React.FC = () => {
           
           <div className="flex items-center space-x-4">
             <div className="flex flex-col items-end">
-               <span className={\`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium transition-colors duration-300
-                 \${status === AppStatus.PROCESSING ? 'bg-blue-100 text-blue-800' : 
+               <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium transition-colors duration-300
+                 ${status === AppStatus.PROCESSING ? 'bg-blue-100 text-blue-800' : 
                    status === AppStatus.COMPLETED ? 'bg-green-100 text-green-800' : 
-                   'bg-gray-100 text-gray-800'}\`}>
+                   'bg-gray-100 text-gray-800'}`}>
                  {status === AppStatus.PROCESSING ? '● Processing' : status}
                </span>
             </div>
           </div>
         </header>
 
+        {/* Content Area */}
         <div className="flex-1 flex overflow-hidden">
-          <div className={\`flex-1 overflow-y-auto p-8 \${showRightPanel ? '' : 'max-w-7xl mx-auto w-full'}\`}>
+          {/* Left Panel: Views */}
+          <div className={`flex-1 overflow-y-auto p-8 ${showRightPanel ? '' : 'max-w-7xl mx-auto w-full'}`}>
              {renderContent()}
           </div>
 
+          {/* Right Panel: Logs & Status - Only visible on processing tabs */}
           {showRightPanel && (
             <div className="w-96 border-l border-gray-200 bg-white flex flex-col shadow-xl z-10 transition-all duration-300">
               <div className="p-4 border-b border-gray-200">
@@ -196,11 +208,11 @@ const App: React.FC = () => {
                 </div>
                 <div className="w-full bg-gray-100 rounded-full h-2.5 mb-4 overflow-hidden">
                   <div 
-                    className={\`h-2.5 rounded-full transition-all duration-300 \${
+                    className={`h-2.5 rounded-full transition-all duration-300 ${
                       status === AppStatus.ERROR ? 'bg-red-500' : 
                       status === AppStatus.COMPLETED ? 'bg-green-500' : 'bg-blue-600'
-                    }\`} 
-                    style={{ width: \`\${progress}%\` }}
+                    }`} 
+                    style={{ width: `${progress}%` }}
                   ></div>
                 </div>
               </div>
