@@ -1,7 +1,7 @@
 // VendorFlow API Configuration
 // Update this URL when your tunnel changes
 
-export const API_BASE_URL = 'https://brook-browse-hit-come.trycloudflare.com/';
+export const API_BASE_URL = 'https://currencies-european-saving-lexington.trycloudflare.com';
 
 export const API_ENDPOINTS = {
   status: `${API_BASE_URL}/api/status`,
