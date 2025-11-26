@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
-import { Database, Upload, X, Info } from 'lucide-react';
-import { AppStatus, ScrapingConfig } from '../types';
+import { Upload, Play, Square, Download, FileText, Zap } from 'lucide-react';
+import { AppStatus } from '../types';
 
 interface ScrapingViewProps {
   status: AppStatus;
@@ -8,253 +8,298 @@ interface ScrapingViewProps {
   onStop: () => void;
 }
 
+interface ScrapingConfig {
+  model_column: string;
+  prefix: string;
+  variation_mode: string;
+  start_row: number;
+  end_row: number;
+  save_interval: number;
+}
+
 export const ScrapingView: React.FC<ScrapingViewProps> = ({ status, onStart, onStop }) => {
   const [file, setFile] = useState<File | null>(null);
   const [config, setConfig] = useState<ScrapingConfig>({
-    modelColumn: 'Model',
+    model_column: 'Mfr Model',
     prefix: '',
-    variationMode: 'None',
-    startRow: 1,
-    endRow: 9999,
-    saveInterval: 10
+    variation_mode: 'None',
+    start_row: 1,
+    end_row: 1000,
+    save_interval: 5,
   });
-
+  const [fileInfo, setFileInfo] = useState<{ rows: number; columns: string[] } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const isProcessing = status === AppStatus.PROCESSING;
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      setFile(e.target.files[0]);
+  // Extract prefix from filename (3 digits at end before extension)
+  const extractPrefixFromFilename = (filename: string): string => {
+    const baseName = filename.replace(/\.[^/.]+$/, ''); // Remove extension
+    const match = baseName.match(/(\d{3})$/);
+    return match ? match[1] : '';
+  };
+
+  // Parse CSV to get row count and column names
+  const parseCSVFile = (file: File): Promise<{ rows: number; columns: string[] }> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const text = e.target?.result as string;
+          const lines = text.split('\n').filter(line => line.trim());
+          const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
+          resolve({
+            rows: lines.length - 1, // Exclude header
+            columns: headers
+          });
+        } catch (err) {
+          reject(err);
+        }
+      };
+      reader.onerror = reject;
+      reader.readAsText(file);
+    });
+  };
+
+  // Auto-detect model column
+  const detectModelColumn = (columns: string[]): string => {
+    for (const col of columns) {
+      const lower = col.toLowerCase();
+      if (lower.includes('model') && lower.includes('mfr')) {
+        return col;
+      }
+    }
+    for (const col of columns) {
+      if (col.toLowerCase().includes('model')) {
+        return col;
+      }
+    }
+    return columns[0] || 'Mfr Model';
+  };
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = e.target.files?.[0];
+    if (!selectedFile) return;
+
+    setFile(selectedFile);
+
+    // Auto-detect prefix from filename
+    const prefix = extractPrefixFromFilename(selectedFile.name);
+    
+    // Parse CSV for row count and columns
+    try {
+      const info = await parseCSVFile(selectedFile);
+      setFileInfo(info);
+      
+      // Auto-detect model column
+      const modelCol = detectModelColumn(info.columns);
+      
+      setConfig(prev => ({
+        ...prev,
+        prefix: prefix || prev.prefix,
+        end_row: info.rows,
+        model_column: modelCol,
+      }));
+    } catch (err) {
+      console.error('Error parsing CSV:', err);
     }
   };
 
   const handleStart = () => {
-    if (!file) {
-      alert('Please select an Excel file');
-      return;
-    }
+    if (!file) return;
     onStart(file, config);
   };
 
+  const isProcessing = status === AppStatus.PROCESSING;
+
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="bg-white rounded-xl border border-gray-200 p-6">
-        <h2 className="text-2xl font-bold text-gray-900 mb-2 flex items-center">
-          <Database className="w-7 h-7 mr-3 text-blue-600" />
-          Web Scraping Automation
-        </h2>
-        <p className="text-gray-600">
-          Extract product data from vendor websites using Selenium-powered web scraping
-        </p>
-      </div>
-
-      {/* File Upload */}
-      <div className="bg-white rounded-xl border border-gray-200 p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">Input File</h3>
-        <div
-          onClick={() => !isProcessing && fileInputRef.current?.click()}
-          className={`border-2 border-dashed rounded-lg p-8 text-center transition-all ${
-            isProcessing
-              ? 'border-gray-200 bg-gray-50 cursor-not-allowed'
-              : 'border-gray-300 hover:border-blue-400 hover:bg-blue-50 cursor-pointer'
-          }`}
-        >
-          <Upload className={`w-12 h-12 mx-auto mb-4 ${isProcessing ? 'text-gray-400' : 'text-blue-500'}`} />
-          {file ? (
-            <div className="flex items-center justify-center space-x-2">
-              <span className="text-sm font-medium text-gray-700">
-                {file.name} ({(file.size / 1024).toFixed(1)} KB)
-              </span>
-              {!isProcessing && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setFile(null);
-                  }}
-                  className="p-1 hover:bg-gray-200 rounded"
-                >
-                  <X className="w-4 h-4 text-gray-500" />
-                </button>
-              )}
-            </div>
-          ) : (
-            <>
-              <p className="text-gray-700 font-medium mb-1">Click to upload Excel file</p>
-              <p className="text-sm text-gray-500">Supports .xlsx, .xls files</p>
-            </>
-          )}
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".xlsx,.xls"
-            onChange={handleFileChange}
-            className="hidden"
-            disabled={isProcessing}
-          />
+      {/* File Selection Card */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <div className="px-6 py-4 border-b border-gray-100 bg-gray-50">
+          <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wide">CSV File Selection</h3>
+        </div>
+        <div className="p-6">
+          <div 
+            className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors cursor-pointer
+              ${file ? 'border-blue-300 bg-blue-50' : 'border-gray-300 hover:border-gray-400'}`}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv"
+              onChange={handleFileSelect}
+              className="hidden"
+            />
+            {file ? (
+              <div className="space-y-2">
+                <FileText className="w-12 h-12 mx-auto text-blue-500" />
+                <p className="text-sm font-medium text-gray-900">{file.name}</p>
+                <p className="text-xs text-gray-500">
+                  {(file.size / 1024).toFixed(1)} KB
+                  {fileInfo && ` • ${fileInfo.rows} rows • ${fileInfo.columns.length} columns`}
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <Upload className="w-12 h-12 mx-auto text-gray-400" />
+                <p className="text-sm text-gray-600">Click to select CSV file</p>
+                <p className="text-xs text-gray-400">Prefix will be auto-detected from filename</p>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Configuration */}
-      <div className="bg-white rounded-xl border border-gray-200 p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">Scraping Configuration</h3>
-        <div className="space-y-4">
-          {/* Model Column */}
-          <div className="flex items-center justify-between py-3 border-b border-gray-100">
-            <div className="flex items-center space-x-2">
-              <label className="text-sm font-medium text-gray-700">Model Column Name</label>
-              <div className="group relative">
-                <Info className="w-4 h-4 text-gray-400 cursor-help" />
-                <div className="absolute hidden group-hover:block bottom-full left-0 mb-2 w-64 p-2 bg-gray-900 text-white text-xs rounded-lg shadow-lg z-10">
-                  Excel column name containing product model numbers
-                </div>
-              </div>
+      {/* Configuration Card */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <div className="px-6 py-4 border-b border-gray-100 bg-gray-50">
+          <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wide">Scraping Configuration</h3>
+        </div>
+        <div className="p-6 space-y-4">
+          {/* Model Column & Prefix */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Model Column</label>
+              {fileInfo ? (
+                <select
+                  value={config.model_column}
+                  onChange={(e) => setConfig(prev => ({ ...prev, model_column: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  {fileInfo.columns.map(col => (
+                    <option key={col} value={col}>{col}</option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value={config.model_column}
+                  onChange={(e) => setConfig(prev => ({ ...prev, model_column: e.target.value }))}
+                  placeholder="e.g., Mfr Model"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              )}
             </div>
-            <input
-              type="text"
-              value={config.modelColumn}
-              onChange={(e) => setConfig({ ...config, modelColumn: e.target.value })}
-              className="w-64 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              placeholder="e.g., Model"
-              disabled={isProcessing}
-            />
-          </div>
-
-          {/* Prefix */}
-          <div className="flex items-center justify-between py-3 border-b border-gray-100">
-            <div className="flex items-center space-x-2">
-              <label className="text-sm font-medium text-gray-700">Model Prefix</label>
-              <div className="group relative">
-                <Info className="w-4 h-4 text-gray-400 cursor-help" />
-                <div className="absolute hidden group-hover:block bottom-full left-0 mb-2 w-64 p-2 bg-gray-900 text-white text-xs rounded-lg shadow-lg z-10">
-                  Optional prefix to add before model numbers (e.g., brand name)
-                </div>
-              </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                URL Prefix
+                {config.prefix && <span className="text-green-600 ml-2 text-xs">(auto-detected)</span>}
+              </label>
+              <input
+                type="text"
+                value={config.prefix}
+                onChange={(e) => setConfig(prev => ({ ...prev, prefix: e.target.value }))}
+                placeholder="e.g., 109"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
             </div>
-            <input
-              type="text"
-              value={config.prefix}
-              onChange={(e) => setConfig({ ...config, prefix: e.target.value })}
-              className="w-64 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              placeholder="Optional prefix"
-              disabled={isProcessing}
-            />
-          </div>
-
-          {/* Variation Mode */}
-          <div className="flex items-center justify-between py-3 border-b border-gray-100">
-            <div className="flex items-center space-x-2">
-              <label className="text-sm font-medium text-gray-700">Variation Mode</label>
-              <div className="group relative">
-                <Info className="w-4 h-4 text-gray-400 cursor-help" />
-                <div className="absolute hidden group-hover:block bottom-full left-0 mb-2 w-64 p-2 bg-gray-900 text-white text-xs rounded-lg shadow-lg z-10">
-                  How to handle product variations (None, Model Variations, or Custom)
-                </div>
-              </div>
-            </div>
-            <select
-              value={config.variationMode}
-              onChange={(e) => setConfig({ ...config, variationMode: e.target.value as ScrapingConfig['variationMode'] })}
-              className="w-64 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              disabled={isProcessing}
-            >
-              <option value="None">None</option>
-              <option value="Model Variations">Model Variations</option>
-              <option value="Custom">Custom</option>
-            </select>
           </div>
 
           {/* Row Range */}
-          <div className="flex items-center justify-between py-3 border-b border-gray-100">
-            <div className="flex items-center space-x-2">
-              <label className="text-sm font-medium text-gray-700">Row Range</label>
-              <div className="group relative">
-                <Info className="w-4 h-4 text-gray-400 cursor-help" />
-                <div className="absolute hidden group-hover:block bottom-full left-0 mb-2 w-64 p-2 bg-gray-900 text-white text-xs rounded-lg shadow-lg z-10">
-                  Specify which rows to process from the Excel file
-                </div>
-              </div>
-            </div>
-            <div className="flex space-x-2">
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Start Row</label>
               <input
                 type="number"
-                value={config.startRow}
-                onChange={(e) => setConfig({ ...config, startRow: parseInt(e.target.value) || 1 })}
-                className="w-28 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="Start"
-                min="1"
-                disabled={isProcessing}
+                min={1}
+                value={config.start_row}
+                onChange={(e) => setConfig(prev => ({ ...prev, start_row: parseInt(e.target.value) || 1 }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               />
-              <span className="flex items-center text-gray-500">to</span>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                End Row
+                {fileInfo && <span className="text-green-600 ml-2 text-xs">(auto-detected)</span>}
+              </label>
               <input
                 type="number"
-                value={config.endRow}
-                onChange={(e) => setConfig({ ...config, endRow: parseInt(e.target.value) || 9999 })}
-                className="w-28 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="End"
-                min="1"
-                disabled={isProcessing}
+                min={1}
+                value={config.end_row}
+                onChange={(e) => setConfig(prev => ({ ...prev, end_row: parseInt(e.target.value) || 1000 }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Save Interval</label>
+              <input
+                type="number"
+                min={1}
+                max={100}
+                value={config.save_interval}
+                onChange={(e) => setConfig(prev => ({ ...prev, save_interval: parseInt(e.target.value) || 5 }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               />
             </div>
           </div>
 
-          {/* Save Interval */}
-          <div className="flex items-center justify-between py-3">
-            <div className="flex items-center space-x-2">
-              <label className="text-sm font-medium text-gray-700">Save Interval</label>
-              <div className="group relative">
-                <Info className="w-4 h-4 text-gray-400 cursor-help" />
-                <div className="absolute hidden group-hover:block bottom-full left-0 mb-2 w-64 p-2 bg-gray-900 text-white text-xs rounded-lg shadow-lg z-10">
-                  Save progress every N products (prevents data loss)
-                </div>
-              </div>
-            </div>
-            <input
-              type="number"
-              value={config.saveInterval}
-              onChange={(e) => setConfig({ ...config, saveInterval: parseInt(e.target.value) || 10 })}
-              className="w-64 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              placeholder="e.g., 10"
-              min="1"
-              disabled={isProcessing}
-            />
+          {/* Variation Mode */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Variation Mode</label>
+            <select
+              value={config.variation_mode}
+              onChange={(e) => setConfig(prev => ({ ...prev, variation_mode: e.target.value }))}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="None">None (Original only)</option>
+              <option value="Auto">Auto (Based on AQ Specification)</option>
+              <option value="Gas Type">Gas Type (LP, NG)</option>
+              <option value="Electric">Electric (18 voltage variations)</option>
+              <option value="Low Voltage">Low Voltage (12 variations)</option>
+              <option value="Check All">Check All (20 variations)</option>
+            </select>
+            <p className="mt-1 text-xs text-gray-500">
+              {config.variation_mode === 'Auto' && 'Uses AQ Specification column to determine variation type'}
+              {config.variation_mode === 'None' && 'Only scrapes original model number'}
+              {config.variation_mode === 'Gas Type' && 'Scrapes original + LP and NG variants'}
+              {config.variation_mode === 'Electric' && 'Scrapes original + 18 electrical voltage variants'}
+              {config.variation_mode === 'Check All' && 'Scrapes original + all 20 possible variants'}
+            </p>
           </div>
         </div>
       </div>
 
       {/* Action Buttons */}
-      <div className="flex space-x-4">
-        <button
-          onClick={handleStart}
-          disabled={!file || isProcessing}
-          className={`flex-1 py-3 px-6 rounded-lg font-medium transition-all ${
-            !file || isProcessing
-              ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-              : 'bg-blue-600 text-white hover:bg-blue-700 shadow-lg hover:shadow-xl'
-          }`}
-        >
-          {isProcessing ? 'Scraping in Progress...' : 'Start Scraping'}
-        </button>
-        {isProcessing && (
+      <div className="flex items-center justify-end space-x-3">
+        {isProcessing ? (
           <button
             onClick={onStop}
-            className="px-6 py-3 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 transition-all shadow-lg hover:shadow-xl"
+            className="inline-flex items-center px-6 py-3 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 transition-colors"
           >
-            Stop
+            <Square className="w-4 h-4 mr-2" />
+            Stop Scraping
+          </button>
+        ) : (
+          <button
+            onClick={handleStart}
+            disabled={!file || !config.prefix}
+            className={`inline-flex items-center px-6 py-3 font-medium rounded-lg transition-colors
+              ${!file || !config.prefix 
+                ? 'bg-gray-300 text-gray-500 cursor-not-allowed' 
+                : 'bg-blue-600 text-white hover:bg-blue-700'}`}
+          >
+            <Play className="w-4 h-4 mr-2" />
+            Start Scraping
           </button>
         )}
       </div>
 
       {/* Info Box */}
-      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-        <h4 className="text-sm font-semibold text-blue-900 mb-2">How It Works</h4>
-        <ul className="text-sm text-blue-800 space-y-1">
-          <li>• Selenium-powered web scraping extracts product data from vendor websites</li>
-          <li>• Processes model numbers, dimensions, weights, and product images</li>
-          <li>• Saves progress automatically at specified intervals</li>
-          <li>• Generates output Excel file with all scraped data</li>
-        </ul>
-      </div>
+      {file && config.prefix && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <div className="flex items-start">
+            <Zap className="w-5 h-5 text-blue-600 mt-0.5 mr-3" />
+            <div className="text-sm text-blue-800">
+              <p className="font-medium">Ready to scrape</p>
+              <p className="mt-1">
+                Will scrape rows {config.start_row} to {config.end_row} from column "{config.model_column}" 
+                using prefix "{config.prefix}" with {config.variation_mode} variation mode.
+                Results auto-save every {config.save_interval} models.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

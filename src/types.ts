@@ -13,16 +13,25 @@ export interface LogEntry {
 }
 
 export interface ScrapingConfig {
-  modelColumn: string;
+  model_column: string;
   prefix: string;
-  variationMode: 'None' | 'Model Variations' | 'Custom';
-  startRow: number;
-  endRow: number;
-  saveInterval: number;
+  variation_mode: string;
+  start_row: number;
+  end_row: number;
+  save_interval: number;
 }
 
 export interface TagConfig {
-  pushToShopify: boolean;
+  mode: 'process' | 'push';
+  output_name?: string;
+}
+
+export interface AppState {
+  activeTab: string;
+  status: AppStatus;
+  progress: number;
+  currentTask: string;
+  logs: LogEntry[];
 }
 
 export type TabId = 'dashboard' | 'scraping' | 'tags' | 'weights' | 'eniture' | 'settings';
