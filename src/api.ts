@@ -1,7 +1,7 @@
 // VendorFlow API Configuration
 // Update this URL when your tunnel changes
 
-export const API_BASE_URL = 'https://lyric-conferences-impression-francis.trycloudflare.com';
+export const API_BASE_URL = 'https://authentic-ace-yrs-gregory.trycloudflare.com';
 
 export const API_ENDPOINTS = {
   status: `${API_BASE_URL}/api/status`,
