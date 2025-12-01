@@ -1,305 +1,455 @@
-import React, { useState, useRef } from 'react';
-import { Upload, Play, Square, Download, FileText, Zap } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Upload, Play, Square, Download, Database } from 'lucide-react';
 import { AppStatus } from '../types';
+
+const API_URL = 'https://api.mkpi.site';
 
 interface ScrapingViewProps {
   status: AppStatus;
-  onStart: (file: File, config: ScrapingConfig) => void;
+  onStart: (file: File, config: any) => void;
   onStop: () => void;
-}
-
-interface ScrapingConfig {
-  model_column: string;
-  prefix: string;
-  variation_mode: string;
-  start_row: number;
-  end_row: number;
-  save_interval: number;
 }
 
 export const ScrapingView: React.FC<ScrapingViewProps> = ({ status, onStart, onStop }) => {
   const [file, setFile] = useState<File | null>(null);
-  const [config, setConfig] = useState<ScrapingConfig>({
-    model_column: 'Mfr Model',
-    prefix: '',
-    variation_mode: 'None',
-    start_row: 1,
-    end_row: 1000,
-    save_interval: 5,
-  });
-  const [fileInfo, setFileInfo] = useState<{ rows: number; columns: string[] } | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [prefix, setPrefix] = useState('');
+  const [variationMode, setVariationMode] = useState('None');
+  const [startRow, setStartRow] = useState(1);
+  const [endRow, setEndRow] = useState(1000);
+  const [saveInterval, setSaveInterval] = useState(5);
+  const [modelColumn, setModelColumn] = useState('Mfr Model');
+  
+  // Progress tracking
+  const [progress, setProgress] = useState(0);
+  const [currentModel, setCurrentModel] = useState('');
+  const [processedCount, setProcessedCount] = useState(0);
+  const [totalCount, setTotalCount] = useState(0);
+  const [logs, setLogs] = useState<Array<{timestamp: string, message: string, type: string}>>([]);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+  
+  // SSE connection
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const logsEndRef = useRef<HTMLDivElement>(null);
 
-  // Extract prefix from filename (3 digits at end before extension)
-  const extractPrefixFromFilename = (filename: string): string => {
-    const baseName = filename.replace(/\.[^/.]+$/, ''); // Remove extension
-    const match = baseName.match(/(\d{3})$/);
-    return match ? match[1] : '';
-  };
+  // Auto-scroll logs to bottom
+  useEffect(() => {
+    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [logs]);
 
-  // Parse CSV to get row count and column names
-  const parseCSVFile = (file: File): Promise<{ rows: number; columns: string[] }> => {
-    return new Promise((resolve, reject) => {
+  // Handle file selection
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = e.target.files?.[0];
+    if (selectedFile) {
+      setFile(selectedFile);
+      
+      // Auto-detect prefix from filename (last 3 digits)
+      const match = selectedFile.name.match(/(\d{3})(?:\.|$)/);
+      if (match) {
+        setPrefix(match[1]);
+      }
+      
+      // Auto-detect end row by reading CSV
       const reader = new FileReader();
-      reader.onload = (e) => {
-        try {
-          const text = e.target?.result as string;
-          const lines = text.split('\n').filter(line => line.trim());
+      reader.onload = (event) => {
+        const text = event.target?.result as string;
+        const lines = text.split('\n');
+        const rowCount = lines.length - 1; // Subtract header
+        setEndRow(rowCount);
+        
+        // Auto-detect model column from header
+        if (lines.length > 0) {
           const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
-          resolve({
-            rows: lines.length - 1, // Exclude header
-            columns: headers
-          });
-        } catch (err) {
-          reject(err);
+          const modelCol = headers.find(h => h.toLowerCase().includes('model') && h.toLowerCase().includes('mfr'));
+          if (modelCol) {
+            setModelColumn(modelCol);
+          }
         }
       };
-      reader.onerror = reject;
-      reader.readAsText(file);
-    });
+      reader.readAsText(selectedFile);
+    }
   };
 
-  // Auto-detect model column
-  const detectModelColumn = (columns: string[]): string => {
-    for (const col of columns) {
-      const lower = col.toLowerCase();
-      if (lower.includes('model') && lower.includes('mfr')) {
-        return col;
-      }
+  // Connect to SSE stream
+  const connectSSE = (sid: string) => {
+    // Close existing connection
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
     }
-    for (const col of columns) {
-      if (col.toLowerCase().includes('model')) {
-        return col;
-      }
-    }
-    return columns[0] || 'Mfr Model';
-  };
 
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = e.target.files?.[0];
-    if (!selectedFile) return;
-
-    setFile(selectedFile);
-
-    // Auto-detect prefix from filename
-    const prefix = extractPrefixFromFilename(selectedFile.name);
+    const eventSource = new EventSource(`${API_URL}/api/logs/stream?session_id=${sid}`);
     
-    // Parse CSV for row count and columns
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        
+        switch (data.type) {
+          case 'progress':
+            setProgress(data.percentage);
+            setCurrentModel(data.current_model);
+            setProcessedCount(data.processed);
+            setTotalCount(data.total);
+            break;
+            
+          case 'log':
+            setLogs(prev => [...prev, data.log]);
+            break;
+            
+          case 'complete':
+            setIsProcessing(false);
+            if (data.status === 'completed') {
+              setLogs(prev => [...prev, {
+                timestamp: new Date().toLocaleTimeString(),
+                message: '✓ Scraping completed successfully!',
+                type: 'success'
+              }]);
+            } else if (data.status === 'error') {
+              setLogs(prev => [...prev, {
+                timestamp: new Date().toLocaleTimeString(),
+                message: `✗ Error: ${data.error}`,
+                type: 'error'
+              }]);
+            }
+            eventSource.close();
+            break;
+            
+          case 'error':
+            setLogs(prev => [...prev, {
+              timestamp: new Date().toLocaleTimeString(),
+              message: `✗ ${data.message}`,
+              type: 'error'
+            }]);
+            setIsProcessing(false);
+            eventSource.close();
+            break;
+        }
+      } catch (e) {
+        console.error('Error parsing SSE data:', e);
+      }
+    };
+
+    eventSource.onerror = (error) => {
+      console.error('SSE Error:', error);
+      eventSource.close();
+      setIsProcessing(false);
+    };
+
+    eventSourceRef.current = eventSource;
+  };
+
+  // Cleanup SSE on unmount
+  useEffect(() => {
+    return () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+      }
+    };
+  }, []);
+
+  // Start scraping
+  const handleStart = async () => {
+    if (!file) {
+      alert('Please select a CSV file');
+      return;
+    }
+
+    if (!prefix) {
+      alert('Please enter a prefix');
+      return;
+    }
+
     try {
-      const info = await parseCSVFile(selectedFile);
-      setFileInfo(info);
-      
-      // Auto-detect model column
-      const modelCol = detectModelColumn(info.columns);
-      
-      setConfig(prev => ({
-        ...prev,
-        prefix: prefix || prev.prefix,
-        end_row: info.rows,
-        model_column: modelCol,
-      }));
-    } catch (err) {
-      console.error('Error parsing CSV:', err);
+      setIsProcessing(true);
+      setProgress(0);
+      setLogs([]);
+      setCurrentModel('');
+      setProcessedCount(0);
+      setTotalCount(0);
+
+      // Create form data
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('prefix', prefix);
+      formData.append('variation_mode', variationMode);
+      formData.append('start_row', startRow.toString());
+      formData.append('end_row', endRow.toString());
+      formData.append('save_interval', saveInterval.toString());
+      formData.append('model_column', modelColumn);
+
+      // Start scraping
+      const response = await fetch(`${API_URL}/api/scrape`, {
+        method: 'POST',
+        body: formData
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        setSessionId(result.session_id);
+        connectSSE(result.session_id);
+        
+        setLogs([{
+          timestamp: new Date().toLocaleTimeString(),
+          message: `Started scraping with session ${result.session_id}`,
+          type: 'info'
+        }]);
+      } else {
+        throw new Error(result.error || 'Failed to start scraping');
+      }
+
+    } catch (error) {
+      console.error('Error starting scraping:', error);
+      setIsProcessing(false);
+      setLogs([{
+        timestamp: new Date().toLocaleTimeString(),
+        message: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        type: 'error'
+      }]);
     }
   };
 
-  const handleStart = () => {
-    if (!file) return;
-    onStart(file, config);
+  // Stop scraping
+  const handleStop = () => {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+    }
+    setIsProcessing(false);
+    setLogs(prev => [...prev, {
+      timestamp: new Date().toLocaleTimeString(),
+      message: 'Stopped by user',
+      type: 'warning'
+    }]);
   };
-
-  const isProcessing = status === AppStatus.PROCESSING;
 
   return (
     <div className="space-y-6">
-      {/* File Selection Card */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-100 bg-gray-50">
-          <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wide">CSV File Selection</h3>
+      {/* File Upload Card */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+        <div className="flex items-center space-x-3 mb-4">
+          <div className="w-10 h-10 rounded-lg bg-blue-50 flex items-center justify-center">
+            <Database className="w-5 h-5 text-blue-600" />
+          </div>
+          <h3 className="text-lg font-semibold text-gray-900">Data Source</h3>
         </div>
-        <div className="p-6">
-          <div 
-            className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors cursor-pointer
-              ${file ? 'border-blue-300 bg-blue-50' : 'border-gray-300 hover:border-gray-400'}`}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".csv"
-              onChange={handleFileSelect}
-              className="hidden"
-            />
-            {file ? (
-              <div className="space-y-2">
-                <FileText className="w-12 h-12 mx-auto text-blue-500" />
-                <p className="text-sm font-medium text-gray-900">{file.name}</p>
-                <p className="text-xs text-gray-500">
-                  {(file.size / 1024).toFixed(1)} KB
-                  {fileInfo && ` • ${fileInfo.rows} rows • ${fileInfo.columns.length} columns`}
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <Upload className="w-12 h-12 mx-auto text-gray-400" />
-                <p className="text-sm text-gray-600">Click to select CSV file</p>
-                <p className="text-xs text-gray-400">Prefix will be auto-detected from filename</p>
-              </div>
+
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              CSV File
+            </label>
+            <div className="relative">
+              <input
+                type="file"
+                accept=".csv"
+                onChange={handleFileChange}
+                className="hidden"
+                id="csv-upload"
+                disabled={isProcessing}
+              />
+              <label
+                htmlFor="csv-upload"
+                className={`flex items-center justify-center px-4 py-3 border-2 border-dashed rounded-lg cursor-pointer transition-colors ${
+                  isProcessing
+                    ? 'border-gray-200 bg-gray-50 cursor-not-allowed'
+                    : 'border-gray-300 hover:border-blue-400 hover:bg-blue-50'
+                }`}
+              >
+                <Upload className="w-5 h-5 mr-2 text-gray-400" />
+                <span className="text-sm text-gray-600">
+                  {file ? file.name : 'Choose CSV file...'}
+                </span>
+              </label>
+            </div>
+            {file && (
+              <p className="mt-2 text-xs text-gray-500">
+                {(file.size / 1024).toFixed(1)} KB • {endRow} rows detected
+              </p>
             )}
           </div>
         </div>
       </div>
 
       {/* Configuration Card */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-100 bg-gray-50">
-          <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wide">Scraping Configuration</h3>
-        </div>
-        <div className="p-6 space-y-4">
-          {/* Model Column & Prefix */}
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Model Column</label>
-              {fileInfo ? (
-                <select
-                  value={config.model_column}
-                  onChange={(e) => setConfig(prev => ({ ...prev, model_column: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                >
-                  {fileInfo.columns.map(col => (
-                    <option key={col} value={col}>{col}</option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  type="text"
-                  value={config.model_column}
-                  onChange={(e) => setConfig(prev => ({ ...prev, model_column: e.target.value }))}
-                  placeholder="e.g., Mfr Model"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                />
-              )}
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                URL Prefix
-                {config.prefix && <span className="text-green-600 ml-2 text-xs">(auto-detected)</span>}
-              </label>
-              <input
-                type="text"
-                value={config.prefix}
-                onChange={(e) => setConfig(prev => ({ ...prev, prefix: e.target.value }))}
-                placeholder="e.g., 109"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              />
-            </div>
-          </div>
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">Scraping Configuration</h3>
 
-          {/* Row Range */}
-          <div className="grid grid-cols-3 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Start Row</label>
-              <input
-                type="number"
-                min={1}
-                value={config.start_row}
-                onChange={(e) => setConfig(prev => ({ ...prev, start_row: parseInt(e.target.value) || 1 }))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                End Row
-                {fileInfo && <span className="text-green-600 ml-2 text-xs">(auto-detected)</span>}
-              </label>
-              <input
-                type="number"
-                min={1}
-                value={config.end_row}
-                onChange={(e) => setConfig(prev => ({ ...prev, end_row: parseInt(e.target.value) || 1000 }))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Save Interval</label>
-              <input
-                type="number"
-                min={1}
-                max={100}
-                value={config.save_interval}
-                onChange={(e) => setConfig(prev => ({ ...prev, save_interval: parseInt(e.target.value) || 5 }))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              />
-            </div>
-          </div>
-
-          {/* Variation Mode */}
+        <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Variation Mode</label>
-            <select
-              value={config.variation_mode}
-              onChange={(e) => setConfig(prev => ({ ...prev, variation_mode: e.target.value }))}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            >
-              <option value="None">None (Original only)</option>
-              <option value="Auto">Auto (Based on AQ Specification)</option>
-              <option value="Gas Type">Gas Type (LP, NG)</option>
-              <option value="Electric">Electric (18 voltage variations)</option>
-              <option value="Low Voltage">Low Voltage (12 variations)</option>
-              <option value="Check All">Check All (20 variations)</option>
-            </select>
-            <p className="mt-1 text-xs text-gray-500">
-              {config.variation_mode === 'Auto' && 'Uses AQ Specification column to determine variation type'}
-              {config.variation_mode === 'None' && 'Only scrapes original model number'}
-              {config.variation_mode === 'Gas Type' && 'Scrapes original + LP and NG variants'}
-              {config.variation_mode === 'Electric' && 'Scrapes original + 18 electrical voltage variants'}
-              {config.variation_mode === 'Check All' && 'Scrapes original + all 20 possible variants'}
-            </p>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              URL Prefix
+            </label>
+            <input
+              type="text"
+              value={prefix}
+              onChange={(e) => setPrefix(e.target.value)}
+              placeholder="e.g., 109"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              disabled={isProcessing}
+            />
           </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Model Column
+            </label>
+            <input
+              type="text"
+              value={modelColumn}
+              onChange={(e) => setModelColumn(e.target.value)}
+              placeholder="e.g., Mfr Model"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              disabled={isProcessing}
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Variation Mode
+            </label>
+            <select
+              value={variationMode}
+              onChange={(e) => setVariationMode(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              disabled={isProcessing}
+            >
+              <option>None</option>
+              <option>Auto</option>
+              <option>Gas Type</option>
+              <option>Electric</option>
+              <option>Low Voltage</option>
+              <option>Check All</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Save Interval
+            </label>
+            <input
+              type="number"
+              value={saveInterval}
+              onChange={(e) => setSaveInterval(parseInt(e.target.value))}
+              min="1"
+              max="100"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              disabled={isProcessing}
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Start Row
+            </label>
+            <input
+              type="number"
+              value={startRow}
+              onChange={(e) => setStartRow(parseInt(e.target.value))}
+              min="1"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              disabled={isProcessing}
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              End Row
+            </label>
+            <input
+              type="number"
+              value={endRow}
+              onChange={(e) => setEndRow(parseInt(e.target.value))}
+              min="1"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              disabled={isProcessing}
+            />
+          </div>
+        </div>
+
+        <div className="flex space-x-3 mt-6">
+          {!isProcessing ? (
+            <button
+              onClick={handleStart}
+              disabled={!file || !prefix}
+              className="flex-1 flex items-center justify-center px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+            >
+              <Play className="w-5 h-5 mr-2" />
+              Start Scraping
+            </button>
+          ) : (
+            <button
+              onClick={handleStop}
+              className="flex-1 flex items-center justify-center px-4 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+            >
+              <Square className="w-5 h-5 mr-2" />
+              Stop
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Action Buttons */}
-      <div className="flex items-center justify-end space-x-3">
-        {isProcessing ? (
-          <button
-            onClick={onStop}
-            className="inline-flex items-center px-6 py-3 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 transition-colors"
-          >
-            <Square className="w-4 h-4 mr-2" />
-            Stop Scraping
-          </button>
-        ) : (
-          <button
-            onClick={handleStart}
-            disabled={!file || !config.prefix}
-            className={`inline-flex items-center px-6 py-3 font-medium rounded-lg transition-colors
-              ${!file || !config.prefix 
-                ? 'bg-gray-300 text-gray-500 cursor-not-allowed' 
-                : 'bg-blue-600 text-white hover:bg-blue-700'}`}
-          >
-            <Play className="w-4 h-4 mr-2" />
-            Start Scraping
-          </button>
-        )}
-      </div>
+      {/* Progress Card */}
+      {isProcessing && (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-gray-900">Progress</h3>
+            <span className="text-sm font-medium text-blue-600">
+              {progress}%
+            </span>
+          </div>
 
-      {/* Info Box */}
-      {file && config.prefix && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-          <div className="flex items-start">
-            <Zap className="w-5 h-5 text-blue-600 mt-0.5 mr-3" />
-            <div className="text-sm text-blue-800">
-              <p className="font-medium">Ready to scrape</p>
-              <p className="mt-1">
-                Will scrape rows {config.start_row} to {config.end_row} from column "{config.model_column}" 
-                using prefix "{config.prefix}" with {config.variation_mode} variation mode.
-                Results auto-save every {config.save_interval} models.
-              </p>
+          <div className="mb-4">
+            <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-blue-600 transition-all duration-300"
+                style={{ width: `${progress}%` }}
+              />
             </div>
           </div>
+
+          {currentModel && (
+            <div className="text-sm text-gray-600">
+              <span className="font-medium">Current Model:</span> {currentModel}
+              <span className="mx-2">•</span>
+              <span>{processedCount} / {totalCount}</span>
+            </div>
+          )}
         </div>
       )}
+
+      {/* Activity Log */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200">
+        <div className="p-4 border-b border-gray-200">
+          <h3 className="text-lg font-semibold text-gray-900">Activity Log</h3>
+        </div>
+        <div className="p-4 bg-slate-900 rounded-b-xl" style={{ maxHeight: '400px', overflow: 'auto' }}>
+          <div className="font-mono text-sm space-y-1">
+            {logs.length === 0 ? (
+              <div className="text-gray-500 text-center py-8">
+                No activity yet. Start scraping to see live progress.
+              </div>
+            ) : (
+              logs.map((log, idx) => (
+                <div
+                  key={idx}
+                  className={`${
+                    log.type === 'error'
+                      ? 'text-red-400'
+                      : log.type === 'success'
+                      ? 'text-green-400'
+                      : log.type === 'warning'
+                      ? 'text-yellow-400'
+                      : 'text-gray-300'
+                  }`}
+                >
+                  <span className="text-gray-500">[{log.timestamp}]</span>{' '}
+                  {log.message}
+                </div>
+              ))
+            )}
+            <div ref={logsEndRef} />
+          </div>
+        </div>
+      </div>
     </div>
   );
 };
