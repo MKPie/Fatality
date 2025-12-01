@@ -110,7 +110,7 @@ const App: React.FC = () => {
           fullEndpoint = endpointMap[endpoint] || `${API_ENDPOINTS.status.replace('/api/status', '')}${endpoint}`;
         }
         
-        const response = await fetch(`https://api.mkpi.site${endpoint}`, { 
+        const response = await fetch(fullEndpoint, {
           method: 'POST', 
           body: formData,
           credentials: 'include'
