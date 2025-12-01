@@ -4,27 +4,25 @@
 export const API_BASE_URL = 'https://api.mkpi.site';
 
 export const API_ENDPOINTS = {
-  status: `${API_BASE_URL}/api/status`,
+  status: `${API_BASE_URL}/`,  // Changed from /api/status
+  health: `${API_BASE_URL}/health`,
   stop: `${API_BASE_URL}/api/stop`,
-  config: `${API_BASE_URL}/api/config`,
-  upload: `${API_BASE_URL}/api/upload`,
   logs: `${API_BASE_URL}/api/logs`,
   logsStream: `${API_BASE_URL}/api/logs/stream`,
   
-  // Scraping
+  // Scraping - removed /file
   scrape: `${API_BASE_URL}/api/scrape`,
-  scrapeFile: `${API_BASE_URL}/api/scrape/file`,
-  scrapeResults: `${API_BASE_URL}/api/scrape/results`,
+  scrapeFile: `${API_BASE_URL}/api/scrape`,
   
-  // Tags
-  tagsProcess: `${API_BASE_URL}/api/tags/process`,
-  tagsPush: `${API_BASE_URL}/api/tags/push`,
+  // Tags - removed /process and /push suffixes
+  tagsProcess: `${API_BASE_URL}/api/tags`,
+  tagsPush: `${API_BASE_URL}/api/tags`,
   
-  // Weights
-  weightsProcess: `${API_BASE_URL}/api/weights/process`,
+  // Weights - removed /process
+  weightsProcess: `${API_BASE_URL}/api/weights`,
   
-  // Eniture
-  enitureSync: `${API_BASE_URL}/api/eniture/sync`,
+  // Eniture - removed /sync
+  enitureSync: `${API_BASE_URL}/api/eniture`,
   
   // Download
   download: (filename: string) => `${API_BASE_URL}/api/download/${filename}`,
